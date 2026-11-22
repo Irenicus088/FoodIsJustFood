@@ -1,0 +1,111 @@
+name: build
+
+# Every push compiles the plugin. The logs go to the ci-logs branch; the ready-to-install package (SKSE folder) goes
+# to the dist branch when the build works.
+on:
+  push:
+    branches-ignore: [ci-logs, dist]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  plugin:
+    runs-on: windows-2022
+    env:
+      VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-bincache
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
+      CLIB_COMMIT: 07262cc2ae75777a422ed0c9621310fadef7c382   # CommonLibSSE-NG 15.7.3, as Hearthcooking
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get CommonLibSSE-NG
+        shell: pwsh
+        run: |
+          git clone https://github.com/alandtse/CommonLibSSE-NG extern/CommonLibSSE-NG
+          git -C extern/CommonLibSSE-NG checkout $env:CLIB_COMMIT
+          git -C extern/CommonLibSSE-NG submodule update --init --recursive
+          $old = Get-Date "2000-01-01"
+          Get-ChildItem extern -Recurse -File | ForEach-Object { $_.LastWriteTime = $old }
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: vcpkg-bincache
+          key: vcpkg-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ env.VCPKG_COMMIT }}-
+
+      - name: Restore build folder
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: build-v1-${{ env.CLIB_COMMIT }}-${{ hashFiles('vcpkg.json', 'CMakeLists.txt') }}
+          restore-keys: build-v1-${{ env.CLIB_COMMIT }}-
+
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
+          git clone https://github.com/microsoft/vcpkg "$env:VCPKG_ROOT"
+          git -C "$env:VCPKG_ROOT" checkout $env:VCPKG_COMMIT
+          & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+
+      - name: Configure
+        id: configure
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`$<`$<CONFIG:Debug>:Debug>DLL" 2>&1 | Tee-Object -FilePath logs/configure.txt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Build
+        id: build
+        if: steps.configure.outcome == 'success'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel -- /p:CL_MPCount=4 /nologo /v:minimal 2>&1 | Tee-Object -FilePath logs/build.txt
+          $code = $LASTEXITCODE
+          Select-String -Path logs/build.txt -Pattern ': (fatal )?error ' | Select-Object -First 40 | ForEach-Object { Write-Output "::error::$($_.Line.Trim())" }
+          if ($code -ne 0) { exit 1 }
+
+      - name: Publish logs to ci-logs branch
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          if (Test-Path build/vcpkg-manifest-install.log) { Copy-Item build/vcpkg-manifest-install.log logs/ }
+          "run ${{ github.run_id }} sha ${{ github.sha }} configure=${{ steps.configure.outcome }} build=${{ steps.build.outcome }}" | Out-File logs/STATUS.txt
+          Copy-Item -Recurse logs $env:RUNNER_TEMP/logs-out
+          cd $env:RUNNER_TEMP/logs-out
+          git init -q -b ci-logs
+          git config user.name "ci"; git config user.email "ci@users.noreply.github.com"
+          git add -A; git commit -q -m "logs for run ${{ github.run_id }}"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" ci-logs
+
+      - name: Fail if configure or build failed
+        if: steps.configure.outcome != 'success' || steps.build.outcome != 'success'
+        shell: pwsh
+        run: exit 1
+
+      - name: Package and publish to dist branch
+        shell: pwsh
+        run: |
+          $p = "$env:RUNNER_TEMP/dist-out/SKSE/Plugins"
+          New-Item -ItemType Directory -Force -Path $p | Out-Null
+          Copy-Item build/Release/FoodIsJustFood.dll $p/
+          Copy-Item FoodIsJustFood.json $p/
+          if (Test-Path build/Release/FoodIsJustFood.pdb) { New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/dist-out/pdb" | Out-Null; Copy-Item build/Release/FoodIsJustFood.pdb "$env:RUNNER_TEMP/dist-out/pdb/" }
+          "run ${{ github.run_id }} sha ${{ github.sha }}" | Out-File $env:RUNNER_TEMP/dist-out/BUILD.txt
+          cd $env:RUNNER_TEMP/dist-out
+          git init -q -b dist
+          git config user.name "ci"; git config user.email "ci@users.noreply.github.com"
+          git add -A; git commit -q -m "build ${{ github.run_id }}"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" dist
