@@ -1,0 +1,30 @@
+cmake_minimum_required(VERSION 3.24)
+project(FoodIsJustFood VERSION 1.0.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# CommonLibSSE-NG (cloned by the workflow into extern/): one DLL for SE 1.5.97 and AE 1.6.x
+set(ENABLE_SKYRIM_SE ON CACHE BOOL "" FORCE)
+set(ENABLE_SKYRIM_AE ON CACHE BOOL "" FORCE)
+set(ENABLE_SKYRIM_VR OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(extern/CommonLibSSE-NG EXCLUDE_FROM_ALL)
+include(extern/CommonLibSSE-NG/cmake/CommonLibSSE.cmake)
+
+find_package(nlohmann_json CONFIG REQUIRED)
+
+add_commonlibsse_plugin(${PROJECT_NAME}
+    AUTHOR "JU4N73RR4"
+    USE_ADDRESS_LIBRARY
+    SOURCES src/main.cpp)
+
+target_include_directories(${PROJECT_NAME} PRIVATE src)
+target_precompile_headers(${PROJECT_NAME} PRIVATE src/PCH.h)
+target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
+
+if (MSVC)
+    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8 /permissive- /Zc:preprocessor)
+    target_link_options(${PROJECT_NAME} PRIVATE "$<$<CONFIG:Release>:/DEBUG:FULL;/OPT:REF;/OPT:ICF>")
+endif()

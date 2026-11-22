@@ -1,0 +1,12 @@
+// Food Is Just Food - exceptions. Lines starting with // are notes.
+// Write things as "Plugin.esp|0x123456" (the plugin that adds them and their ID as shown in xEdit, any load order).
+{
+	// foods left exactly as their mods made them
+	"keepFoods": [],
+
+	// magic effects (MGEF) never taken off any food
+	"keepEffects": [],
+
+	// plugins whose foods are left alone (the plugin that adds the food or the last one that changes it)
+	"skipPlugins": []
+}
