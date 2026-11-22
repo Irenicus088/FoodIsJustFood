@@ -17,6 +17,15 @@ namespace
 		std::unordered_set<RE::FormID>  keepFoods;
 		std::unordered_set<RE::FormID>  keepEffects;
 		std::unordered_set<std::string> skipPlugins;  // lower case
+		bool                            survivalHunger = true;  // false: Survival Mode's hunger goes too
+		std::map<std::string, std::string> text{       // what a food with nothing else to show says
+			{ "light", "Light food. Fills you a little." },
+			{ "medium", "Filling food." },
+			{ "heavy", "Hearty food. Fills you up." },
+			{ "soup", "Soup. Warm and filling." },
+			{ "drink", "A drink." },
+			{ "other", "Just food. It feeds you." },
+		};
 	};
 
 	std::string Lower(std::string a_s)
@@ -95,11 +104,22 @@ namespace
 			for (const auto& s : list("skipPlugins")) {
 				r.skipPlugins.insert(Lower(s));
 			}
+			if (j.contains("survivalHunger") && j["survivalHunger"].is_boolean()) {
+				r.survivalHunger = j["survivalHunger"].get<bool>();
+			}
+			if (j.contains("text") && j["text"].is_object()) {
+				for (const auto& [k, v] : j["text"].items()) {
+					if (v.is_string() && r.text.contains(k)) {
+						r.text[k] = v.get<std::string>();
+					}
+				}
+			}
 		} catch (const std::exception& e) {
 			spdlog::error("{} could not be read ({}) - no exceptions", kJson, e.what());
 			return {};
 		}
-		spdlog::info("Exceptions: {} food(s), {} effect(s), {} plugin(s)", r.keepFoods.size(), r.keepEffects.size(), r.skipPlugins.size());
+		spdlog::info("Exceptions: {} food(s), {} effect(s), {} plugin(s); Survival Mode hunger {}", r.keepFoods.size(), r.keepEffects.size(),
+			r.skipPlugins.size(), r.survivalHunger ? "kept" : "taken off");
 		return r;
 	}
 
@@ -129,6 +149,10 @@ namespace
 		}
 		switch (m->GetArchetype()) {
 		case Arch::kValueModifier:
+			if (!a_r.survivalHunger && m->data.primaryAV == AV::kMood) {
+				return true;  // (Survival Mode's "starvation resistance")
+			}
+			return IsStat(m->data.primaryAV);
 		case Arch::kPeakValueModifier:
 			return IsStat(m->data.primaryAV);
 		case Arch::kDualValueModifier:
@@ -136,6 +160,54 @@ namespace
 		default:
 			return false;  // scripts and everything else stay
 		}
+	}
+
+	// A note in place of the effects a food lost: a do-nothing effect with a line of text, so the item card says
+	// something (an item with no effects crashes the inventory, and one at 0 reads "restores 0 health")
+	std::map<std::string, RE::EffectSetting*> g_notes;
+
+	RE::EffectSetting* Note(const std::string& a_key, const Rules& a_r, const RE::EffectSetting* a_like)
+	{
+		if (const auto it = g_notes.find(a_key); it != g_notes.end()) {
+			return it->second;
+		}
+		auto* factory = RE::IFormFactory::GetConcreteFormFactoryByType<RE::EffectSetting>();
+		auto* m = factory ? factory->Create() : nullptr;
+		if (!m) {
+			spdlog::error("Could not make the note effect");
+			return g_notes[a_key] = nullptr;
+		}
+		using F = RE::EffectSetting::EffectSettingData::Flag;
+		m->data = a_like->data;  // (casting type and delivery as a food's)
+		m->data.archetype = Arch::kScript;
+		m->data.primaryAV = AV::kNone;
+		m->data.secondaryAV = AV::kNone;
+		m->data.associatedForm = nullptr;
+		m->data.associatedSkill = AV::kNone;
+		m->data.resistVariable = AV::kNone;
+		m->data.baseCost = 0.0f;
+		m->data.flags.reset(F::kHostile, F::kDetrimental, F::kRecover, F::kHideInUI, F::kPowerAffectsMagnitude, F::kPowerAffectsDuration);
+		m->data.flags.set(F::kNoMagnitude, F::kNoDuration, F::kNoArea, F::kPainless, F::kNoHitEffect, F::kNoHitEvent);
+		m->fullName = a_r.text.at(a_key).c_str();
+		m->magicItemDescription = a_r.text.at(a_key).c_str();
+		return g_notes[a_key] = m;
+	}
+
+	// SunHelm's kind of food (its hunger goes by these keywords)
+	std::string Kind(RE::AlchemyItem* a_f)
+	{
+		static const std::pair<const char*, const char*> kKinds[] = {
+			{ "_SH_HeavyFoodKeyword", "heavy" }, { "_SH_MediumFoodKeyword", "medium" }, { "_SH_LightFoodKeyword", "light" },
+			{ "_SH_SoupKeyword", "soup" }, { "_SH_DrinkKeyword", "drink" }, { "_SH_AlcoholDrinkKeyword", "drink" },
+		};
+		auto* kf = static_cast<RE::BGSKeywordForm*>(a_f);
+		for (const auto& [id, kind] : kKinds) {
+			const auto* kw = RE::TESForm::LookupByEditorID<RE::BGSKeyword>(id);
+			if (kw && kf->HasKeyword(kw)) {
+				return kind;
+			}
+		}
+		return "other";
 	}
 
 	std::string Describe(const RE::Effect* a_e)
@@ -187,15 +259,30 @@ namespace
 				continue;
 			}
 			const auto value = f->GetGoldValue();  // (the price stays what it was)
-			bool       zero = false;
-			if (keep.empty()) {
-				// the game's item card reads a food's strongest effect without checking, and an item with none
-				// crashes the inventory: keep the first one, doing nothing
-				auto* e = f->effects[0];
-				e->effectItem.magnitude = 0.0f;
-				keep.push_back(e);
-				zero = true;
-				++zeroed;
+			const bool shown = std::ranges::any_of(keep, [](const RE::Effect* e) {
+				return e->baseEffect && !e->baseEffect->data.flags.all(RE::EffectSetting::EffectSettingData::Flag::kHideInUI);
+			});
+			std::string note;
+			if (!shown) {
+				note = Kind(f);
+				const auto  like = std::find_if(f->effects.begin(), f->effects.end(), [](const RE::Effect* e) { return e && e->baseEffect; });
+				auto*       m = like != f->effects.end() ? Note(note, rules, (*like)->baseEffect) : nullptr;
+				if (m) {
+					auto* e = new RE::Effect();
+					e->effectItem.magnitude = 0.0f;
+					e->effectItem.area = 0;
+					e->effectItem.duration = 0;
+					e->baseEffect = m;
+					e->cost = 0.0f;
+					keep.push_back(e);
+					++zeroed;
+				} else if (keep.empty()) {
+					// never none: the game's item card reads a food's strongest effect without checking
+					auto* e = f->effects[0];
+					e->effectItem.magnitude = 0.0f;
+					keep.push_back(e);
+					note = "(first effect left at 0)";
+				}
 			}
 			f->effects.clear();
 			for (auto* e : keep) {
@@ -215,13 +302,13 @@ namespace
 				list += list.empty() ? g : ", " + g;
 			}
 			spdlog::info("[{}] {} ({:08X}): took off {}{}", last, f->GetName(), f->GetFormID(), list,
-				zero ? " (it had nothing else: the first one stays at 0)" : "");
+				note.empty() ? ""s : " - note: " + note);
 		}
 		spdlog::info("---- by plugin");
 		for (const auto& [p, c] : perPlugin) {
 			spdlog::info("{}: {} food(s), {} effect(s) taken off", p, c.foods, c.effects);
 		}
-		spdlog::info("---- {} food(s) changed, {} effect(s) taken off, {} left at 0, {} left alone by the exceptions", foods, effects, zeroed, kept);
+		spdlog::info("---- {} food(s) changed, {} effect(s) taken off, {} with a note, {} left alone by the exceptions", foods, effects, zeroed, kept);
 	}
 
 	void OnMessage(SKSE::MessagingInterface::Message* a_msg)
