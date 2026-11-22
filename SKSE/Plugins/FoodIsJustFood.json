@@ -1,0 +1,26 @@
+// Food Is Just Food - settings. Lines starting with // are notes.
+// Things are written as "Plugin.esp|0x123456" (the plugin that adds them and their ID as shown in xEdit, any load order).
+{
+	// foods left exactly as their mods made them
+	"keepFoods": [],
+
+	// magic effects (MGEF) never taken off any food
+	"keepEffects": [],
+
+	// plugins whose foods are left alone (the plugin that adds the food or the last one that changes it)
+	"skipPlugins": [],
+
+	// true: Survival Mode's hunger effect ("starvation resistance") stays. Set false only if you don't play with
+	// Survival Mode (SunHelm, for example, feeds you by its own keywords)
+	"survivalHunger": true,
+
+	// what a food says when it has no other effect to show, by its SunHelm kind
+	"text": {
+		"light": "Light food. Fills you a little.",
+		"medium": "Filling food.",
+		"heavy": "Hearty food. Fills you up.",
+		"soup": "Soup. Warm and filling.",
+		"drink": "A drink.",
+		"other": "Just food. It feeds you."
+	}
+}
