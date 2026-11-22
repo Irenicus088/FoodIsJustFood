@@ -7,7 +7,8 @@ magicka and stamina and their regeneration, resistances, carry weight, speed, sk
 and warmth (SunHelm, Survival, CACO), drunkenness, diseases and poisonings, every harmful effect and every scripted
 one. No plugin (.esp): nothing is saved in your game. Prices stay as they were.
 
-- Exceptions: `SKSE/Plugins/FoodIsJustFood.json`.
+- Settings and exceptions: `SKSE/Plugins/FoodIsJustFood.json`. A food left with nothing to show gets a line of text by
+  its SunHelm kind (light, filling, hearty, soup, drink) instead of an empty or "restores 0" card.
 - What was changed: `Documents/My Games/Skyrim Special Edition/SKSE/FoodIsJustFood.log`.
 
 Built by GitHub Actions (`.github/workflows/build.yml`): the package goes to the `dist` branch, the logs to `ci-logs`.
