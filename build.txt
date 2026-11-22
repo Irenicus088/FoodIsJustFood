@@ -1,0 +1,12 @@
+
+  1>Checking Build System
+  Building Custom Rule D:/a/FoodIsJustFood/FoodIsJustFood/extern/CommonLibSSE-NG/CMakeLists.txt
+  CommonLibSSE.vcxproj -> D:\a\FoodIsJustFood\FoodIsJustFood\build\extern\CommonLibSSE-NG\Release\CommonLibSSE.lib
+  Building Custom Rule D:/a/FoodIsJustFood/FoodIsJustFood/CMakeLists.txt
+  cmake_pch.cxx
+  __FoodIsJustFoodPlugin.cpp
+  main.cpp
+  Generating Code...
+     Creating library D:/a/FoodIsJustFood/FoodIsJustFood/build/Release/FoodIsJustFood.lib and object D:/a/FoodIsJustFood/FoodIsJustFood/build/Release/FoodIsJustFood.exp
+  FoodIsJustFood.vcxproj -> D:\a\FoodIsJustFood\FoodIsJustFood\build\Release\FoodIsJustFood.dll
+  Building Custom Rule D:/a/FoodIsJustFood/FoodIsJustFood/CMakeLists.txt
